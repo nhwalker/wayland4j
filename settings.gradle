@@ -1,4 +1,5 @@
 rootProject.name = 'wayland4j'
 
 include 'wayland-protocol'
+include 'wayland-client-ffm'
 include 'functional-tests'
