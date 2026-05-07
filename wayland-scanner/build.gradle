@@ -1,0 +1,17 @@
+plugins {
+    id 'application'
+}
+
+application {
+    mainClass = 'org.wayland4j.scanner.cli.ScannerMain'
+    applicationName = 'wayland-scanner-java'
+}
+
+dependencies {
+    // Test only: we compile generated sources against the runtime as part of codegen verification.
+    testImplementation project(':wayland-protocol')
+
+    testImplementation platform('org.junit:junit-bom:5.11.4')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}

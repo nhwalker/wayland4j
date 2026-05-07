@@ -57,3 +57,18 @@ When implementing the code generator, mirror these aspects from
   `WlSurface.attach`). Document any deviations explicitly.
 - Treat `wayland.xml` from upstream as the source of truth — do not hand-edit
   vendored copies; refresh them from the pinned commit.
+
+## Vendored XML Pin
+
+`wayland-protocol/src/main/resources/protocol/wayland.xml` is vendored from
+upstream tag **1.25.0**, commit
+[`3e673a438b0a9749e3bdf5cac4befac86333024c`](https://gitlab.freedesktop.org/wayland/wayland/-/commit/3e673a438b0a9749e3bdf5cac4befac86333024c).
+To refresh:
+
+```sh
+curl -fsS \
+  "https://gitlab.freedesktop.org/wayland/wayland/-/raw/<NEW_TAG>/protocol/wayland.xml" \
+  -o wayland-protocol/src/main/resources/protocol/wayland.xml
+```
+
+Then update this section with the new tag and commit hash.

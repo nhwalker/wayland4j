@@ -1,3 +1,26 @@
+def generatedSourceDir = layout.buildDirectory.dir('generated-src/protocol/main/java')
+def vendoredXml = layout.projectDirectory.file('src/main/resources/protocol/wayland.xml')
+
+tasks.register('generateProtocolSources', JavaExec) {
+    description = 'Runs wayland-scanner against vendored protocol XML.'
+    group = 'build'
+    classpath = project(':wayland-scanner').sourceSets.main.runtimeClasspath
+    mainClass = 'org.wayland4j.scanner.cli.ScannerMain'
+    args(
+        '--input', vendoredXml.asFile.absolutePath,
+        '--output-dir', generatedSourceDir.get().asFile.absolutePath,
+        '--strict'
+    )
+    inputs.file(vendoredXml)
+    outputs.dir(generatedSourceDir)
+    doFirst {
+        generatedSourceDir.get().asFile.deleteDir()
+        generatedSourceDir.get().asFile.mkdirs()
+    }
+}
+
+sourceSets.main.java.srcDir(generateProtocolSources)
+
 dependencies {
     testImplementation platform('org.junit:junit-bom:5.11.4')
     testImplementation 'org.junit.jupiter:junit-jupiter'
