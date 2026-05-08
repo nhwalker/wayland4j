@@ -31,19 +31,21 @@ public final class Wayland {
     }
 
     /**
-     * Trigger {@code WaylandProtocols.<clinit>} so the registry is populated. The
-     * generated protocols class is in the same package as the proxies.
+     * Trigger {@code GeneratedRegistry.<clinit>} so every generated
+     * {@code WaylandProtocols} class loads and registers its interfaces. The
+     * registry aggregator is emitted by the annotation processor based on
+     * which packages carry {@code @GenerateWaylandClient}.
      */
     public static void ensureBootstrapped() {
         if (bootstrapped) return;
         synchronized (Wayland.class) {
             if (bootstrapped) return;
             try {
-                Class.forName("org.wayland4j.client.protocol.WaylandProtocols", true, Wayland.class.getClassLoader());
+                Class.forName("org.wayland4j.client.internal.GeneratedRegistry", true, Wayland.class.getClassLoader());
                 bootstrapped = true;
             } catch (ClassNotFoundException e) {
                 throw new IllegalStateException(
-                        "wayland4j: generated WaylandProtocols class not found; was the annotation processor run?", e);
+                        "wayland4j: generated registry not found; was the annotation processor run?", e);
             }
         }
     }

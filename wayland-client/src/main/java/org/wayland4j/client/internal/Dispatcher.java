@@ -8,6 +8,7 @@ import java.lang.invoke.MethodHandles;
 import java.lang.invoke.MethodType;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.atomic.AtomicReference;
+import org.wayland4j.client.OpaqueProxy;
 import org.wayland4j.client.Proxy;
 
 /**
@@ -110,6 +111,10 @@ public final class Dispatcher {
             if (listener != null) {
                 d.dispatch(proxy, listener, decoded);
             }
+            if (table.isDestructor(opcode)) {
+                // libwayland frees the proxy struct after a destructor event; drop our registry entry.
+                ProxyRegistry.unregister(targetAddr);
+            }
             return 0;
         } catch (Throwable t) {
             PENDING.compareAndSet(null, t);
@@ -155,7 +160,23 @@ public final class Dispatcher {
         long addr = WlArgumentLayout.readAddress(args, slot);
         if (addr == 0L) return null;
         Proxy known = ProxyRegistry.proxyAt(addr);
-        return known; // null if unknown — generated listener may treat that case as opaque
+        if (known != null) return known;
+        // For typed 'o' slots the listener parameter has a specific generated type, so
+        // returning an OpaqueProxy would CCE inside the dispatch lambda. Only fall back
+        // to OpaqueProxy when the slot is untyped (the wl_display.error.object_id case),
+        // where the listener parameter is the abstract Proxy type.
+        if (slotIsTyped(typesArr, typeIndex)) {
+            return null;
+        }
+        // Don't register; libwayland owns the lifetime and the address may be reused.
+        return new OpaqueProxy(MemorySegment.ofAddress(addr));
+    }
+
+    private static boolean slotIsTyped(MemorySegment typesArr, int typeIndex) {
+        if (typesArr == null || typesArr.address() == 0L) return false;
+        MemorySegment window = typesArr.reinterpret((long) (typeIndex + 1) * 8L);
+        MemorySegment entry = window.get(ValueLayout.ADDRESS, (long) typeIndex * 8L);
+        return entry.address() != 0L;
     }
 
     private static Proxy decodeNewId(MemorySegment args, int slot, MemorySegment typesArr, int typeIndex) {

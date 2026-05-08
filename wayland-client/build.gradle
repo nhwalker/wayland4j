@@ -11,9 +11,16 @@ tasks.withType(JavaCompile).configureEach {
     // Generated sources are emitted by the annotation processor into
     // build/generated/sources/annotationProcessor/java/main by default; Gradle
     // already wires that into the compile classpath.
-    options.compilerArgs += ['-Xlint:all', '-Xlint:-processing', '-Xlint:-restricted']
+    // -Xlint:-exports: generated proxies expose `DispatchTable DISPATCH_TABLE`
+    // as a public field whose type lives in an unexported internal package;
+    // that's intentional (the field is for the bootstrap path only).
+    options.compilerArgs += ['-Xlint:all', '-Xlint:-processing', '-Xlint:-restricted', '-Xlint:-exports']
 }
 
 tasks.withType(Test).configureEach {
-    jvmArgs '--enable-native-access=ALL-UNNAMED'
+    // Gradle's java-library plugin still runs tests on the classpath, so the
+    // named module isn't visible at runtime; keep ALL-UNNAMED so unnamed-module
+    // code can call native methods. The named module is also listed for the
+    // case where a downstream test setup runs us on the module path.
+    jvmArgs '--enable-native-access=org.wayland4j.client,ALL-UNNAMED'
 }

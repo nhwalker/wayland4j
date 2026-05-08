@@ -8,7 +8,10 @@ dependencies {
 }
 
 tasks.withType(Test).configureEach {
-    jvmArgs '--enable-native-access=ALL-UNNAMED'
+    // Functional tests run on the classpath as an unnamed module; allow native
+    // access from there. wayland-client carries module-info but lands on the
+    // classpath in this configuration.
+    jvmArgs '--enable-native-access=org.wayland4j.client,ALL-UNNAMED'
     // Pass through compositor wiring set up by the CI launcher.
     if (System.getenv('XDG_RUNTIME_DIR')) {
         environment 'XDG_RUNTIME_DIR', System.getenv('XDG_RUNTIME_DIR')

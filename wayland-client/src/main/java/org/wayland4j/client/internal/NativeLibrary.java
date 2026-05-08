@@ -20,6 +20,16 @@ public final class NativeLibrary {
     public static final Linker LINKER = Linker.nativeLinker();
     public static final SymbolLookup LOOKUP = resolveLibrary();
 
+    static {
+        // wl_proxy_marshal_array_flags landed in libwayland 1.20.91 and is the marshal
+        // entrypoint we always use. If it isn't present we'd fail later with a less
+        // obvious "missing symbol" error; surface a clearer message up front.
+        LOOKUP.find("wl_proxy_marshal_array_flags").orElseThrow(() -> new UnsatisfiedLinkError(
+                "wayland4j requires libwayland-client ≥ 1.20.91 (symbol "
+                        + "wl_proxy_marshal_array_flags not found in the resolved library). "
+                        + "Set WAYLAND4J_CLIENT_LIB to override the loaded path."));
+    }
+
     public static final MethodHandle WL_DISPLAY_CONNECT = downcall(
             "wl_display_connect", FunctionDescriptor.of(ValueLayout.ADDRESS, ValueLayout.ADDRESS));
     public static final MethodHandle WL_DISPLAY_CONNECT_TO_FD = downcall(
@@ -70,6 +80,9 @@ public final class NativeLibrary {
             "wl_proxy_get_version", FunctionDescriptor.of(ValueLayout.JAVA_INT, ValueLayout.ADDRESS));
     public static final MethodHandle WL_PROXY_GET_CLASS = downcall(
             "wl_proxy_get_class", FunctionDescriptor.of(ValueLayout.ADDRESS, ValueLayout.ADDRESS));
+    /** Optional: only present in libwayland-client ≥ 1.23. {@code null} on older libraries. */
+    public static final MethodHandle WL_PROXY_GET_DISPLAY = downcallOptional(
+            "wl_proxy_get_display", FunctionDescriptor.of(ValueLayout.ADDRESS, ValueLayout.ADDRESS));
     public static final MethodHandle WL_PROXY_ADD_DISPATCHER = downcall(
             "wl_proxy_add_dispatcher", FunctionDescriptor.of(
                     ValueLayout.JAVA_INT,
@@ -78,8 +91,36 @@ public final class NativeLibrary {
                     ValueLayout.ADDRESS,    // dispatcher_data
                     ValueLayout.ADDRESS     // user data
             ));
+    public static final MethodHandle WL_PROXY_SET_QUEUE = downcall(
+            "wl_proxy_set_queue",
+            FunctionDescriptor.ofVoid(ValueLayout.ADDRESS, ValueLayout.ADDRESS));
+
+    public static final MethodHandle WL_EVENT_QUEUE_CREATE_NAMED = downcallOptional(
+            "wl_display_create_queue_with_name",
+            FunctionDescriptor.of(ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS));
+    public static final MethodHandle WL_EVENT_QUEUE_CREATE = downcall(
+            "wl_display_create_queue",
+            FunctionDescriptor.of(ValueLayout.ADDRESS, ValueLayout.ADDRESS));
+    public static final MethodHandle WL_EVENT_QUEUE_DESTROY = downcall(
+            "wl_event_queue_destroy",
+            FunctionDescriptor.ofVoid(ValueLayout.ADDRESS));
+    public static final MethodHandle WL_DISPLAY_DISPATCH_QUEUE = downcall(
+            "wl_display_dispatch_queue",
+            FunctionDescriptor.of(ValueLayout.JAVA_INT, ValueLayout.ADDRESS, ValueLayout.ADDRESS));
+    public static final MethodHandle WL_DISPLAY_DISPATCH_QUEUE_PENDING = downcall(
+            "wl_display_dispatch_queue_pending",
+            FunctionDescriptor.of(ValueLayout.JAVA_INT, ValueLayout.ADDRESS, ValueLayout.ADDRESS));
+    public static final MethodHandle WL_DISPLAY_ROUNDTRIP_QUEUE = downcall(
+            "wl_display_roundtrip_queue",
+            FunctionDescriptor.of(ValueLayout.JAVA_INT, ValueLayout.ADDRESS, ValueLayout.ADDRESS));
 
     public static final int WL_MARSHAL_FLAG_DESTROY = 1;
+
+    static {
+        // Route libwayland's client-side log handler to java.util.logging. Best-effort:
+        // missing symbols (e.g. on a stripped libc) are silently ignored.
+        LogBridge.install();
+    }
 
     private NativeLibrary() {
     }
@@ -110,6 +151,13 @@ public final class NativeLibrary {
         MemorySegment addr = LOOKUP.find(symbol)
                 .orElseThrow(() -> new UnsatisfiedLinkError("missing symbol: " + symbol));
         return LINKER.downcallHandle(addr, desc);
+    }
+
+    /** {@code null} if the symbol isn't present in the loaded library. */
+    private static MethodHandle downcallOptional(String symbol, FunctionDescriptor desc) {
+        return LOOKUP.find(symbol)
+                .map(addr -> LINKER.downcallHandle(addr, desc))
+                .orElse(null);
     }
 
     public static MemorySegment proxyClassName(MemorySegment proxy) {

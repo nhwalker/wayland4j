@@ -109,6 +109,49 @@ public final class Display extends WlDisplay implements AutoCloseable {
         return runDispatch(NativeLibrary.WL_DISPLAY_ROUNDTRIP);
     }
 
+    /**
+     * Create a new {@link EventQueue} attached to this display. Caller owns the
+     * queue and must {@link EventQueue#close()} it (or let it be reclaimed when
+     * the display disconnects).
+     *
+     * @param name optional human-readable label; ignored if libwayland is too
+     *             old to expose {@code wl_display_create_queue_with_name}.
+     */
+    public EventQueue createEventQueue(String name) {
+        try {
+            MemorySegment q;
+            if (name != null && NativeLibrary.WL_EVENT_QUEUE_CREATE_NAMED != null) {
+                try (Arena scratch = Arena.ofConfined()) {
+                    byte[] bytes = name.getBytes(StandardCharsets.UTF_8);
+                    MemorySegment c = scratch.allocate(bytes.length + 1L, 1);
+                    MemorySegment.copy(bytes, 0, c, ValueLayout.JAVA_BYTE, 0, bytes.length);
+                    c.set(ValueLayout.JAVA_BYTE, bytes.length, (byte) 0);
+                    q = (MemorySegment) NativeLibrary.WL_EVENT_QUEUE_CREATE_NAMED.invokeExact(ptr(), c);
+                }
+            } else {
+                q = (MemorySegment) NativeLibrary.WL_EVENT_QUEUE_CREATE.invokeExact(ptr());
+            }
+            if (q == null || q.address() == 0L) {
+                throw new IllegalStateException("wl_display_create_queue returned NULL");
+            }
+            return new EventQueue(q, name);
+        } catch (Throwable t) {
+            throw rethrow(t);
+        }
+    }
+
+    public int dispatchQueue(EventQueue queue) throws WaylandProtocolException {
+        return runDispatchQueue(NativeLibrary.WL_DISPLAY_DISPATCH_QUEUE, queue);
+    }
+
+    public int dispatchQueuePending(EventQueue queue) throws WaylandProtocolException {
+        return runDispatchQueue(NativeLibrary.WL_DISPLAY_DISPATCH_QUEUE_PENDING, queue);
+    }
+
+    public int roundtripQueue(EventQueue queue) throws WaylandProtocolException {
+        return runDispatchQueue(NativeLibrary.WL_DISPLAY_ROUNDTRIP_QUEUE, queue);
+    }
+
     public int prepareRead() {
         try {
             return (int) NativeLibrary.WL_DISPLAY_PREPARE_READ.invokeExact(ptr());
@@ -175,6 +218,27 @@ public final class Display extends WlDisplay implements AutoCloseable {
         }
     }
 
+    private int runDispatchQueue(java.lang.invoke.MethodHandle handle, EventQueue queue)
+            throws WaylandProtocolException {
+        if (queue == null) throw new IllegalArgumentException("queue is null");
+        if (Dispatcher.inDispatch()) {
+            throw new IllegalStateException("dispatch called from within a Wayland event listener");
+        }
+        try {
+            int rc = (int) handle.invokeExact(ptr(), queue.ptr());
+            checkPending();
+            if (rc < 0) {
+                throw new WaylandProtocolException(null, 0, getError(),
+                        "wl_display queue dispatch returned " + rc);
+            }
+            return rc;
+        } catch (WaylandProtocolException e) {
+            throw e;
+        } catch (Throwable t) {
+            throw rethrow(t);
+        }
+    }
+
     private void checkPending() throws WaylandProtocolException {
         Throwable t = Dispatcher.takePending();
         if (t != null) {
@@ -216,11 +280,7 @@ public final class Display extends WlDisplay implements AutoCloseable {
 
         @Override
         public void deleteId(WlDisplay self, int id) {
-            // libwayland frees the proxy struct itself; we just drop the
-            // registry entry so we don't hang onto the listener reference.
-            // Locating the entry by id requires a sweep — but at this point
-            // the address is no longer valid, so we leave it and rely on the
-            // user closing destroyed proxies explicitly.
+            ProxyRegistry.unregisterById(display.address(), id);
         }
     }
 }

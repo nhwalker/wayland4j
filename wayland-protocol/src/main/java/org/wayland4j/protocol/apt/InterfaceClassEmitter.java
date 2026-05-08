@@ -2,6 +2,7 @@ package org.wayland4j.protocol.apt;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import org.wayland4j.protocol.model.Arg;
 import org.wayland4j.protocol.model.ArgType;
 import org.wayland4j.protocol.model.EnumDef;
@@ -22,10 +23,10 @@ final class InterfaceClassEmitter {
     private final JavaTypeMapper types;
     private final String typeName;
 
-    InterfaceClassEmitter(String pkg, Interface iface) {
+    InterfaceClassEmitter(String pkg, Interface iface, Map<String, String> interfaceToPackage) {
         this.pkg = pkg;
         this.iface = iface;
-        this.types = new JavaTypeMapper(pkg);
+        this.types = new JavaTypeMapper(pkg, interfaceToPackage);
         this.typeName = JavaIdentifiers.typeName(iface.name());
     }
 
@@ -38,6 +39,7 @@ final class InterfaceClassEmitter {
         sb.append("import org.wayland4j.client.internal.DispatchTable;\n");
         sb.append("import org.wayland4j.client.internal.ProxyRegistry;\n\n");
 
+        emitDoc(sb, "", iface.description());
         boolean autoCloseable = iface.hasDestructor();
         sb.append("public class ").append(typeName).append(" extends Proxy");
         if (autoCloseable) sb.append(" implements AutoCloseable");
@@ -69,9 +71,11 @@ final class InterfaceClassEmitter {
     private void emitEnums(StringBuilder sb) {
         for (EnumDef e : iface.enums()) {
             String name = JavaIdentifiers.upperCamel(e.name());
+            emitDoc(sb, "    ", e.description());
             sb.append("    public static final class ").append(name).append(" {\n");
             sb.append("        private ").append(name).append("() {}\n");
             for (EnumEntry entry : e.entries()) {
+                emitDoc(sb, "        ", entry.summary());
                 sb.append("        public static final int ")
                         .append(JavaIdentifiers.constantName(entry.name()))
                         .append(" = ")
@@ -86,6 +90,7 @@ final class InterfaceClassEmitter {
         if (iface.events().isEmpty()) return;
         sb.append("    public interface Listener {\n");
         for (Event ev : iface.events()) {
+            emitEventDoc(sb, ev);
             sb.append("        void ").append(JavaIdentifiers.methodName(ev.name())).append("(");
             sb.append(typeName).append(" self");
             for (Arg a : ev.args()) {
@@ -111,12 +116,20 @@ final class InterfaceClassEmitter {
             }
             sb.append("),\n");
         }
-        sb.append("    });\n\n");
+        sb.append("    }, new boolean[] {");
+        boolean first = true;
+        for (Event ev : iface.events()) {
+            if (!first) sb.append(", ");
+            sb.append(ev.destructor());
+            first = false;
+        }
+        sb.append("});\n\n");
     }
 
     private String eventArgExtract(Arg a, int slot) {
         return switch (a.type()) {
-            case INT, UINT, FIXED, FD -> "((Integer) args[" + slot + "]).intValue()";
+            case INT, UINT, FD -> "((Integer) args[" + slot + "]).intValue()";
+            case FIXED -> "org.wayland4j.client.internal.WlArgumentLayout.fixedToDouble((Integer) args[" + slot + "])";
             case STRING -> "(String) args[" + slot + "]";
             case ARRAY -> "(byte[]) args[" + slot + "]";
             case OBJECT, NEW_ID -> "(" + types.eventParamType(a) + ") args[" + slot + "]";
@@ -142,15 +155,18 @@ final class InterfaceClassEmitter {
         // Build parameter list (skipping the new_id arg).
         List<String> params = new ArrayList<>();
         List<String> marshalArgs = new ArrayList<>();
+        List<Arg> docArgs = new ArrayList<>();
         for (Arg a : r.args()) {
             if (a.type() == ArgType.NEW_ID) continue;
             String p = types.requestParamType(a) + " " + JavaIdentifiers.fieldName(a.name());
             params.add(p);
             marshalArgs.add(JavaIdentifiers.fieldName(a.name()));
+            docArgs.add(a);
         }
 
         String signature = SignatureEncoder.forRequest(r.since(), r.args());
 
+        emitRequestDoc(sb, r, docArgs);
         String methodName = JavaIdentifiers.methodName(r.name());
         sb.append("    public ").append(returnType).append(' ').append(methodName).append('(');
         sb.append(String.join(", ", params));
@@ -185,12 +201,122 @@ final class InterfaceClassEmitter {
     }
 
     private void emitBindRequest(StringBuilder sb, Request r) {
+        emitRequestDoc(sb, r, List.of());
         String methodName = JavaIdentifiers.methodName(r.name());
         sb.append("    public <P extends Proxy> P ").append(methodName)
                 .append("(int name, Class<P> proxyClass, int version) {\n");
         sb.append("        return Proxy.sendBind(this, ").append(r.opcode())
                 .append(", name, proxyClass, version);\n");
         sb.append("    }\n\n");
+    }
+
+    private void emitRequestDoc(StringBuilder sb, Request r, List<Arg> args) {
+        if (!hasDoc(r.description()) && argsHaveSummaries(args)) {
+            sb.append("    /**\n");
+            for (Arg a : args) {
+                if (a.summary() != null && !a.summary().isBlank()) {
+                    sb.append("     * @param ").append(JavaIdentifiers.fieldName(a.name())).append(' ')
+                            .append(escapeJavadoc(a.summary())).append('\n');
+                }
+            }
+            sb.append("     */\n");
+            return;
+        }
+        if (!hasDoc(r.description()) && args.isEmpty()) return;
+        sb.append("    /**\n");
+        if (hasDoc(r.description())) {
+            for (String line : wrapJavadoc(r.description())) {
+                sb.append("     * ").append(line).append('\n');
+            }
+        }
+        if (argsHaveSummaries(args)) {
+            sb.append("     *\n");
+            for (Arg a : args) {
+                if (a.summary() != null && !a.summary().isBlank()) {
+                    sb.append("     * @param ").append(JavaIdentifiers.fieldName(a.name())).append(' ')
+                            .append(escapeJavadoc(a.summary())).append('\n');
+                }
+            }
+        }
+        sb.append("     */\n");
+    }
+
+    private void emitEventDoc(StringBuilder sb, Event ev) {
+        boolean argSummaries = argsHaveSummaries(ev.args());
+        if (!hasDoc(ev.description()) && !argSummaries) return;
+        sb.append("        /**\n");
+        if (hasDoc(ev.description())) {
+            for (String line : wrapJavadoc(ev.description())) {
+                sb.append("         * ").append(line).append('\n');
+            }
+        }
+        if (argSummaries) {
+            if (hasDoc(ev.description())) sb.append("         *\n");
+            for (Arg a : ev.args()) {
+                if (a.summary() != null && !a.summary().isBlank()) {
+                    sb.append("         * @param ").append(JavaIdentifiers.fieldName(a.name())).append(' ')
+                            .append(escapeJavadoc(a.summary())).append('\n');
+                }
+            }
+        }
+        sb.append("         */\n");
+    }
+
+    private static boolean hasDoc(String s) {
+        return s != null && !s.isBlank();
+    }
+
+    private static boolean argsHaveSummaries(List<Arg> args) {
+        for (Arg a : args) {
+            if (a.summary() != null && !a.summary().isBlank()) return true;
+        }
+        return false;
+    }
+
+    private static void emitDoc(StringBuilder sb, String indent, String description) {
+        if (!hasDoc(description)) return;
+        sb.append(indent).append("/**\n");
+        for (String line : wrapJavadoc(description)) {
+            sb.append(indent).append(" * ").append(line).append('\n');
+        }
+        sb.append(indent).append(" */\n");
+    }
+
+    private static String escapeJavadoc(String s) {
+        return s.replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+                .replace("@", "&#64;")
+                .replace("*/", "*&#47;");
+    }
+
+    private static List<String> wrapJavadoc(String description) {
+        List<String> out = new ArrayList<>();
+        for (String paragraph : description.split("\\R\\R+")) {
+            String text = paragraph.replaceAll("\\s+", " ").strip();
+            if (text.isEmpty()) continue;
+            if (!out.isEmpty()) out.add("");
+            wrapLine(escapeJavadoc(text), 96, out);
+        }
+        return out;
+    }
+
+    private static void wrapLine(String text, int width, List<String> out) {
+        StringBuilder cur = new StringBuilder();
+        for (String word : text.split(" ")) {
+            if (cur.length() == 0) {
+                cur.append(word);
+                continue;
+            }
+            if (cur.length() + 1 + word.length() > width) {
+                out.add(cur.toString());
+                cur.setLength(0);
+                cur.append(word);
+            } else {
+                cur.append(' ').append(word);
+            }
+        }
+        if (cur.length() > 0) out.add(cur.toString());
     }
 
     private static String formatIntLiteral(long value) {

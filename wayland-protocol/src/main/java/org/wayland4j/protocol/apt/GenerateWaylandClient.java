@@ -19,4 +19,11 @@ public @interface GenerateWaylandClient {
      * {@code "org/wayland4j/protocol/wayland.xml"}.
      */
     String xml();
+
+    /**
+     * Marks the package as containing the core Wayland protocol. Core packages
+     * are loaded before extensions so cross-protocol {@code wl_surface}-style
+     * type references resolve. Set on the package that hosts {@code wayland.xml}.
+     */
+    boolean core() default false;
 }

@@ -13,6 +13,12 @@ import java.util.Map;
  * libwayland-client requires. Cyclic references between interfaces are
  * resolved with a two-pass initialization in a single shared arena that lives
  * for the JVM lifetime.
+ *
+ * <p>{@link #populate(Descriptor[])} is additive: each generated
+ * {@code WaylandProtocols} class registers its own descriptors, and later
+ * calls can reference interfaces built by earlier ones (e.g. an extension
+ * referring to {@code wl_surface}). Names that have already been built are
+ * skipped, so loading the same protocol twice is a no-op.
  */
 public final class WlInterfaceArena {
 
@@ -45,7 +51,6 @@ public final class WlInterfaceArena {
     private static final long MSG_OFF_TYPES = 16L;
 
     private static final Map<String, MemorySegment> INTERFACES = new LinkedHashMap<>();
-    private static volatile boolean initialized = false;
 
     private WlInterfaceArena() {
     }
@@ -61,26 +66,35 @@ public final class WlInterfaceArena {
     public record Message(String name, String signature, String[] types) {
     }
 
+    /**
+     * Add the listed descriptors to the global wl_interface graph. Skips
+     * descriptors whose names are already registered (so calling twice with
+     * the same descriptor list is harmless). Returns a snapshot of every
+     * registered name → segment after this call, so callers can pull out
+     * pointers for whatever names they care about.
+     */
     public static synchronized Map<String, MemorySegment> populate(Descriptor[] descriptors) {
-        if (initialized) {
-            return new HashMap<>(INTERFACES);
-        }
-        Map<String, MemorySegment> ifaceSegments = new HashMap<>();
-
-        // Pass 1: allocate every wl_interface (zeroed).
+        // Pass 1: allocate a wl_interface for every name we don't already have.
+        Map<String, MemorySegment> newSegments = new HashMap<>();
         for (Descriptor d : descriptors) {
+            if (INTERFACES.containsKey(d.name())) continue;
             MemorySegment seg = NativeLibrary.LIB_ARENA.allocate(WL_INTERFACE_SIZE, 8);
             seg.fill((byte) 0);
-            ifaceSegments.put(d.name(), seg);
+            newSegments.put(d.name(), seg);
         }
 
-        // Pass 2: fill names, counts, message arrays, and per-slot type pointers.
-        for (Descriptor d : descriptors) {
-            MemorySegment ifaceSeg = ifaceSegments.get(d.name());
-            MemorySegment nameStr = allocateUtf8(d.name());
+        // Combined view used to resolve cross-references in pass 2; covers
+        // both previously-built interfaces and the ones we just allocated.
+        Map<String, MemorySegment> resolution = new HashMap<>(INTERFACES);
+        resolution.putAll(newSegments);
 
-            MemorySegment requestsSeg = buildMessageArray(d.requests(), ifaceSegments);
-            MemorySegment eventsSeg = buildMessageArray(d.events(), ifaceSegments);
+        // Pass 2: fill in only the freshly-allocated interfaces.
+        for (Descriptor d : descriptors) {
+            MemorySegment ifaceSeg = newSegments.get(d.name());
+            if (ifaceSeg == null) continue; // skipped above
+            MemorySegment nameStr = allocateUtf8(d.name());
+            MemorySegment requestsSeg = buildMessageArray(d.requests(), resolution);
+            MemorySegment eventsSeg = buildMessageArray(d.events(), resolution);
 
             ifaceSeg.set(ValueLayout.ADDRESS, IFACE_OFF_NAME, nameStr);
             ifaceSeg.set(ValueLayout.JAVA_INT, IFACE_OFF_VERSION, d.version());
@@ -90,8 +104,7 @@ public final class WlInterfaceArena {
             ifaceSeg.set(ValueLayout.ADDRESS, IFACE_OFF_EVENTS, eventsSeg);
         }
 
-        INTERFACES.putAll(ifaceSegments);
-        initialized = true;
+        INTERFACES.putAll(newSegments);
         return new HashMap<>(INTERFACES);
     }
 
@@ -127,7 +140,8 @@ public final class WlInterfaceArena {
             } else {
                 MemorySegment ifaceSeg = ifaceSegments.get(tName);
                 if (ifaceSeg == null) {
-                    throw new IllegalStateException("undefined wl_interface reference: " + tName);
+                    throw new IllegalStateException("undefined wl_interface reference: " + tName
+                            + " (load the protocol that defines it before referencing it)");
                 }
                 arr.set(ValueLayout.ADDRESS, i * 8L, ifaceSeg);
             }
@@ -143,10 +157,7 @@ public final class WlInterfaceArena {
         return seg;
     }
 
-    public static MemorySegment get(String name) {
-        if (!initialized) {
-            throw new IllegalStateException("WlInterfaceArena not initialized; ensure WaylandProtocols class has loaded");
-        }
+    public static synchronized MemorySegment get(String name) {
         MemorySegment seg = INTERFACES.get(name);
         if (seg == null) {
             throw new IllegalArgumentException("unknown wl_interface: " + name);

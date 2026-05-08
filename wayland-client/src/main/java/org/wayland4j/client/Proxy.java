@@ -60,6 +60,19 @@ public abstract class Proxy {
         }
     }
 
+    /**
+     * Route subsequent events for this proxy to {@code queue}. Pass {@code null}
+     * to send events back to the display's default queue.
+     */
+    public final void setQueue(EventQueue queue) {
+        MemorySegment qPtr = queue == null ? MemorySegment.NULL : queue.ptr();
+        try {
+            NativeLibrary.WL_PROXY_SET_QUEUE.invokeExact(ptr, qPtr);
+        } catch (Throwable t) {
+            throw new RuntimeException(t);
+        }
+    }
+
     @Override
     public String toString() {
         return getClass().getSimpleName() + "[id=" + id() + ", v=" + version() + "]";
@@ -204,7 +217,7 @@ public abstract class Proxy {
             switch (c) {
                 case 'i', 'u', 'h' -> WlArgumentLayout.writeInt(argv, slot, ((Number) v).intValue());
                 case 'f' -> WlArgumentLayout.writeInt(argv, slot,
-                        v instanceof Number n ? n.intValue() : WlArgumentLayout.doubleToFixed((Double) v));
+                        WlArgumentLayout.doubleToFixed(((Number) v).doubleValue()));
                 case 's' -> WlArgumentLayout.writeAddress(argv, slot,
                         v == null ? MemorySegment.NULL : allocateUtf8(arena, (String) v));
                 case 'o' -> WlArgumentLayout.writeAddress(argv, slot,

@@ -85,8 +85,9 @@ public final class XmlProtocolParser {
     private static Event parseEvent(Element el, int opcode) {
         String name = el.getAttribute("name");
         Integer since = optInt(el, "since");
+        boolean destructor = "destructor".equals(el.getAttribute("type"));
         String description = parseDescription(child(el, "description"));
-        return new Event(name, opcode, since, description, parseArgs(el));
+        return new Event(name, opcode, since, destructor, description, parseArgs(el));
     }
 
     private static List<Arg> parseArgs(Element parent) {

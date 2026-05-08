@@ -14,9 +14,19 @@ public final class DispatchTable {
     }
 
     private final EventDispatcher[] events;
+    private final boolean[] destructorEvents;
 
     public DispatchTable(EventDispatcher[] events) {
+        this(events, new boolean[events.length]);
+    }
+
+    public DispatchTable(EventDispatcher[] events, boolean[] destructorEvents) {
+        if (events.length != destructorEvents.length) {
+            throw new IllegalArgumentException(
+                    "events/destructor flag length mismatch: " + events.length + " vs " + destructorEvents.length);
+        }
         this.events = events;
+        this.destructorEvents = destructorEvents;
     }
 
     public int eventCount() {
@@ -29,5 +39,12 @@ public final class DispatchTable {
                     "opcode " + opcode + " out of range (events=" + events.length + ")");
         }
         return events[opcode];
+    }
+
+    public boolean isDestructor(int opcode) {
+        if (opcode < 0 || opcode >= destructorEvents.length) {
+            return false;
+        }
+        return destructorEvents[opcode];
     }
 }

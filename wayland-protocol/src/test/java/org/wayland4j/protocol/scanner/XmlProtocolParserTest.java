@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.io.InputStream;
 import org.junit.jupiter.api.Test;
 import org.wayland4j.protocol.model.ArgType;
+import org.wayland4j.protocol.model.Event;
 import org.wayland4j.protocol.model.Interface;
 import org.wayland4j.protocol.model.Protocol;
 import org.wayland4j.protocol.model.Request;
@@ -57,6 +58,16 @@ class XmlProtocolParserTest {
         Request destroy = shmPool.destructor();
         assertNotNull(destroy);
         assertEquals("destroy", destroy.name());
+    }
+
+    @Test
+    void destructorEventIsRecognised() {
+        Protocol p = load();
+        Interface callback = findInterface(p, "wl_callback");
+        Event done = callback.events().getFirst();
+        assertEquals("done", done.name());
+        assertTrue(done.destructor(),
+                "wl_callback.done is declared with type=\"destructor\" in wayland.xml");
     }
 
     private static Interface findInterface(Protocol p, String name) {
