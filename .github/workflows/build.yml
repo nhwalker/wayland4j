@@ -26,5 +26,27 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
+      - name: Install Weston (headless backend)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            weston seatd dbus-user-session libxkbcommon0 libwayland-client0
+
+      - name: Launch headless Weston
+        run: |
+          export XDG_RUNTIME_DIR=$(mktemp -d)
+          chmod 700 "$XDG_RUNTIME_DIR"
+          export WAYLAND_DISPLAY=wayland-test-0
+          export LIBSEAT_BACKEND=noop
+          weston --backend=headless --socket="$WAYLAND_DISPLAY" --idle-time=0 --width=200 --height=200 \
+            > "$XDG_RUNTIME_DIR/weston.log" 2>&1 &
+          for i in $(seq 1 20); do
+            if [ -S "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY" ]; then break; fi
+            sleep 0.5
+          done
+          test -S "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY" || { echo "weston socket never appeared"; cat "$XDG_RUNTIME_DIR/weston.log"; exit 1; }
+          echo "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR" >> "$GITHUB_ENV"
+          echo "WAYLAND_DISPLAY=$WAYLAND_DISPLAY" >> "$GITHUB_ENV"
+
       - name: Build
         run: ./gradlew build --stacktrace
